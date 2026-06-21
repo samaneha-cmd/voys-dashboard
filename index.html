@@ -29,11 +29,11 @@
     .badge-answered { background: #EAF3DE; color: #3B6D11; }
     .call-num { font-weight: 500; flex: 1; }
     .call-time { color: #b4b2a9; }
+    .call-dir { font-size: 11px; color: #888780; }
     .empty { color: #b4b2a9; font-size: 13px; padding: 1rem 0; text-align: center; }
     .legend { display: flex; gap: 16px; font-size: 12px; color: #888780; margin-bottom: 10px; }
     .legend span { display: flex; align-items: center; gap: 5px; }
     .legend-sq { width: 10px; height: 10px; border-radius: 2px; }
-    .raw { font-size: 11px; color: #888780; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -49,25 +49,20 @@
 
   function getNumber(c) {
     if (!c) return 'Unknown';
-    const fields = ['caller', 'src', 'from', 'phonenumber', 'cli', 'callerid', 'number'];
-    for (const f of fields) {
-      if (c[f]) {
-        if (typeof c[f] === 'string') return c[f];
-        if (typeof c[f] === 'object') {
-          return c[f].number || c[f].name || c[f].phonenumber || JSON.stringify(c[f]);
-        }
-      }
+    if (c.direction === 'inbound') {
+      return c.caller?.number || c.caller?.name || 'Unknown';
     }
-    return 'Unknown';
+    return c.destination?.number || c.caller?.number || 'Unknown';
   }
 
   function isAnswered(c) {
     if (!c) return false;
-    const status = (c.status || '').toLowerCase();
-    if (['answered', 'in-progress', 'connected', 'completed'].includes(status)) return true;
-    if (c.atime > 0 || c.duration > 0 || c.billsec > 0) return true;
-    if (c.call_answer_order > 0) return true;
-    return false;
+    return c.status === 'ended' && c.reason === 'completed';
+  }
+
+  function isMissed(c) {
+    if (!c) return false;
+    return c.status === 'ended' && c.reason !== 'completed';
   }
 
   function fmtTime(str) {
@@ -77,7 +72,10 @@
   }
 
   function render(calls) {
-    if (!calls.length) {
+    // Only show ended calls
+    const ended = calls.filter(c => c.status === 'ended');
+
+    if (!ended.length) {
       document.getElementById('main').innerHTML = `
         <div style="text-align:center;padding:3rem;color:#888780">
           <h2 style="font-size:18px;font-weight:500;margin-bottom:1rem">Waiting for calls...</h2>
@@ -87,9 +85,9 @@
       return;
     }
 
-    const answered = calls.filter(isAnswered);
-    const missed = calls.filter(c => !isAnswered(c));
-    const total = calls.length;
+    const answered = ended.filter(isAnswered);
+    const missed = ended.filter(isMissed);
+    const total = ended.length;
     const missRate = total ? Math.round(missed.length / total * 100) : 0;
     const ansRate = 100 - missRate;
 
@@ -115,16 +113,15 @@
         <p class="card-title">Recent answered calls</p>
         <ul class="call-list" id="answeredList"></ul>
       </div>
-      <div class="card">
-        <p class="card-title" style="margin-bottom:0.5rem">Raw data (last call)</p>
-        <pre class="raw">${JSON.stringify(calls[0], null, 2)}</pre>
-      </div>
     `;
 
     if (chart1) chart1.destroy();
     chart1 = new Chart(document.getElementById('donut'), {
       type: 'doughnut',
-      data: { labels: ['Answered','Missed'], datasets: [{ data: [ansRate, missRate], backgroundColor: ['#639922','#A32D2D'], borderWidth: 0 }] },
+      data: {
+        labels: ['Answered','Missed'],
+        datasets: [{ data: [ansRate, missRate], backgroundColor: ['#639922','#A32D2D'], borderWidth: 0 }]
+      },
       options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } }
     });
 
@@ -133,6 +130,7 @@
       <li class="call-item">
         <span class="badge badge-missed">Missed</span>
         <span class="call-num">${getNumber(c)}</span>
+        <span class="call-dir">${c.direction || ''}</span>
         <span class="call-time">${fmtTime(c.receivedAt)}</span>
       </li>`).join('') : '<li class="empty">No missed calls 🎉</li>';
 
@@ -141,6 +139,7 @@
       <li class="call-item">
         <span class="badge badge-answered">Answered</span>
         <span class="call-num">${getNumber(c)}</span>
+        <span class="call-dir">${c.direction || ''}</span>
         <span class="call-time">${fmtTime(c.receivedAt)}</span>
       </li>`).join('') : '<li class="empty">No answered calls yet</li>';
   }
