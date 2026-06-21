@@ -33,10 +33,7 @@
     .legend { display: flex; gap: 16px; font-size: 12px; color: #888780; margin-bottom: 10px; }
     .legend span { display: flex; align-items: center; gap: 5px; }
     .legend-sq { width: 10px; height: 10px; border-radius: 2px; }
-    .waiting { text-align: center; padding: 3rem; color: #888780; }
-    .waiting h2 { font-size: 18px; font-weight: 500; margin-bottom: 1rem; }
-    .waiting p { font-size: 14px; line-height: 1.6; }
-    .waiting code { background: #f1efe8; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    .raw { font-size: 11px; color: #888780; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -45,30 +42,50 @@
   <span><span class="dot"></span><span id="statusText">Live</span></span>
 </header>
 <main id="main">
-  <div class="waiting">
-    <h2>Waiting for calls...</h2>
-    <p>Your dashboard is live! Now go to <strong>freedom.voys.nl</strong> → Beheer → Gespreksnotificaties → Toevoegen<br/><br/>
-    Paste your Vercel URL as the webhook:<br/>
-    <code id="webhookUrl">Loading...</code></p>
-  </div>
+  <p style="text-align:center;padding:3rem;color:#888780">Loading...</p>
 </main>
 <script>
-  document.getElementById('webhookUrl').textContent = window.location.origin + '/api/calls';
+  let chart1;
 
-  let allCalls = [];
-  let chart1, chart2;
+  function getNumber(c) {
+    if (!c) return 'Unknown';
+    const fields = ['caller', 'src', 'from', 'phonenumber', 'cli', 'callerid', 'number'];
+    for (const f of fields) {
+      if (c[f]) {
+        if (typeof c[f] === 'string') return c[f];
+        if (typeof c[f] === 'object') {
+          return c[f].number || c[f].name || c[f].phonenumber || JSON.stringify(c[f]);
+        }
+      }
+    }
+    return 'Unknown';
+  }
 
   function isAnswered(c) {
-    return c.status === 'answered' || c.atime > 0 || c.duration > 0;
+    if (!c) return false;
+    const status = (c.status || '').toLowerCase();
+    if (['answered', 'in-progress', 'connected', 'completed'].includes(status)) return true;
+    if (c.atime > 0 || c.duration > 0 || c.billsec > 0) return true;
+    if (c.call_answer_order > 0) return true;
+    return false;
   }
 
   function fmtTime(str) {
     if (!str) return '—';
-    return new Date(str).toLocaleString('nl-NL', { dateStyle: 'short', timeStyle: 'short' });
+    try { return new Date(str).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }); }
+    catch(e) { return str; }
   }
 
   function render(calls) {
-    if (!calls.length) return;
+    if (!calls.length) {
+      document.getElementById('main').innerHTML = `
+        <div style="text-align:center;padding:3rem;color:#888780">
+          <h2 style="font-size:18px;font-weight:500;margin-bottom:1rem">Waiting for calls...</h2>
+          <p style="font-size:14px">Your webhook URL is:<br><br>
+          <code style="background:#f1efe8;padding:4px 8px;border-radius:4px">${window.location.origin}/api/calls</code></p>
+        </div>`;
+      return;
+    }
 
     const answered = calls.filter(isAnswered);
     const missed = calls.filter(c => !isAnswered(c));
@@ -98,6 +115,10 @@
         <p class="card-title">Recent answered calls</p>
         <ul class="call-list" id="answeredList"></ul>
       </div>
+      <div class="card">
+        <p class="card-title" style="margin-bottom:0.5rem">Raw data (last call)</p>
+        <pre class="raw">${JSON.stringify(calls[0], null, 2)}</pre>
+      </div>
     `;
 
     if (chart1) chart1.destroy();
@@ -111,7 +132,7 @@
     missedList.innerHTML = missed.length ? missed.slice(0,10).map(c => `
       <li class="call-item">
         <span class="badge badge-missed">Missed</span>
-        <span class="call-num">${c.caller || c.src || 'Unknown'}</span>
+        <span class="call-num">${getNumber(c)}</span>
         <span class="call-time">${fmtTime(c.receivedAt)}</span>
       </li>`).join('') : '<li class="empty">No missed calls 🎉</li>';
 
@@ -119,7 +140,7 @@
     answeredList.innerHTML = answered.length ? answered.slice(0,10).map(c => `
       <li class="call-item">
         <span class="badge badge-answered">Answered</span>
-        <span class="call-num">${c.caller || c.src || 'Unknown'}</span>
+        <span class="call-num">${getNumber(c)}</span>
         <span class="call-time">${fmtTime(c.receivedAt)}</span>
       </li>`).join('') : '<li class="empty">No answered calls yet</li>';
   }
@@ -128,9 +149,10 @@
     try {
       const res = await fetch('/api/calls');
       const data = await res.json();
-      allCalls = data;
-      render(allCalls);
-    } catch(e) {}
+      render(data);
+    } catch(e) {
+      document.getElementById('statusText').textContent = 'Connection error';
+    }
   }
 
   loadCalls();
