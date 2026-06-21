@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Voys Call Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f4f0; color: #1a1a18; }
+    header { background: #fff; border-bottom: 1px solid #d3d1c7; padding: 0 2rem; height: 56px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 16px; font-weight: 500; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #639922; display: inline-block; margin-right: 6px; }
+    main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 1.5rem; }
+    .metric { background: #fff; border: 0.5px solid #d3d1c7; border-radius: 12px; padding: 16px 18px; }
+    .metric-label { font-size: 12px; color: #888780; margin-bottom: 4px; }
+    .metric-value { font-size: 28px; font-weight: 500; }
+    .metric-value.danger { color: #A32D2D; }
+    .metric-value.success { color: #3B6D11; }
+    .metric-sub { font-size: 12px; color: #b4b2a9; margin-top: 3px; }
+    .card { background: #fff; border: 0.5px solid #d3d1c7; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; }
+    .card-title { font-size: 14px; font-weight: 500; margin-bottom: 1rem; }
+    .call-list { list-style: none; }
+    .call-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 0.5px solid #f1efe8; font-size: 13px; }
+    .call-item:last-child { border-bottom: none; }
+    .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; flex-shrink: 0; }
+    .badge-missed { background: #FCEBEB; color: #A32D2D; }
+    .badge-answered { background: #EAF3DE; color: #3B6D11; }
+    .call-num { font-weight: 500; flex: 1; }
+    .call-time { color: #b4b2a9; }
+    .empty { color: #b4b2a9; font-size: 13px; padding: 1rem 0; text-align: center; }
+    .legend { display: flex; gap: 16px; font-size: 12px; color: #888780; margin-bottom: 10px; }
+    .legend span { display: flex; align-items: center; gap: 5px; }
+    .legend-sq { width: 10px; height: 10px; border-radius: 2px; }
+    .waiting { text-align: center; padding: 3rem; color: #888780; }
+    .waiting h2 { font-size: 18px; font-weight: 500; margin-bottom: 1rem; }
+    .waiting p { font-size: 14px; line-height: 1.6; }
+    .waiting code { background: #f1efe8; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>📞 Voys Call Dashboard</h1>
+  <span><span class="dot"></span><span id="statusText">Live</span></span>
+</header>
+<main id="main">
+  <div class="waiting">
+    <h2>Waiting for calls...</h2>
+    <p>Your dashboard is live! Now go to <strong>freedom.voys.nl</strong> → Beheer → Gespreksnotificaties → Toevoegen<br/><br/>
+    Paste your Vercel URL as the webhook:<br/>
+    <code id="webhookUrl">Loading...</code></p>
+  </div>
+</main>
+<script>
+  document.getElementById('webhookUrl').textContent = window.location.origin + '/api/calls';
+
+  let allCalls = [];
+  let chart1, chart2;
+
+  function isAnswered(c) {
+    return c.status === 'answered' || c.atime > 0 || c.duration > 0;
+  }
+
+  function fmtTime(str) {
+    if (!str) return '—';
+    return new Date(str).toLocaleString('nl-NL', { dateStyle: 'short', timeStyle: 'short' });
+  }
+
+  function render(calls) {
+    if (!calls.length) return;
+
+    const answered = calls.filter(isAnswered);
+    const missed = calls.filter(c => !isAnswered(c));
+    const total = calls.length;
+    const missRate = total ? Math.round(missed.length / total * 100) : 0;
+    const ansRate = 100 - missRate;
+
+    document.getElementById('main').innerHTML = `
+      <div class="metric-grid">
+        <div class="metric"><p class="metric-label">Total calls</p><p class="metric-value">${total}</p><p class="metric-sub">All time</p></div>
+        <div class="metric"><p class="metric-label">Missed calls</p><p class="metric-value danger">${missed.length}</p><p class="metric-sub">${missRate}% miss rate</p></div>
+        <div class="metric"><p class="metric-label">Answered calls</p><p class="metric-value success">${answered.length}</p><p class="metric-sub">${ansRate}% answer rate</p></div>
+      </div>
+      <div class="card">
+        <p class="card-title">Missed vs answered</p>
+        <div class="legend">
+          <span><span class="legend-sq" style="background:#639922"></span>Answered</span>
+          <span><span class="legend-sq" style="background:#A32D2D"></span>Missed</span>
+        </div>
+        <div style="position:relative;height:200px"><canvas id="donut" role="img" aria-label="Call outcome split"></canvas></div>
+      </div>
+      <div class="card">
+        <p class="card-title">Recent missed calls</p>
+        <ul class="call-list" id="missedList"></ul>
+      </div>
+      <div class="card">
+        <p class="card-title">Recent answered calls</p>
+        <ul class="call-list" id="answeredList"></ul>
+      </div>
+    `;
+
+    if (chart1) chart1.destroy();
+    chart1 = new Chart(document.getElementById('donut'), {
+      type: 'doughnut',
+      data: { labels: ['Answered','Missed'], datasets: [{ data: [ansRate, missRate], backgroundColor: ['#639922','#A32D2D'], borderWidth: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } }
+    });
+
+    const missedList = document.getElementById('missedList');
+    missedList.innerHTML = missed.length ? missed.slice(0,10).map(c => `
+      <li class="call-item">
+        <span class="badge badge-missed">Missed</span>
+        <span class="call-num">${c.caller || c.src || 'Unknown'}</span>
+        <span class="call-time">${fmtTime(c.receivedAt)}</span>
+      </li>`).join('') : '<li class="empty">No missed calls 🎉</li>';
+
+    const answeredList = document.getElementById('answeredList');
+    answeredList.innerHTML = answered.length ? answered.slice(0,10).map(c => `
+      <li class="call-item">
+        <span class="badge badge-answered">Answered</span>
+        <span class="call-num">${c.caller || c.src || 'Unknown'}</span>
+        <span class="call-time">${fmtTime(c.receivedAt)}</span>
+      </li>`).join('') : '<li class="empty">No answered calls yet</li>';
+  }
+
+  async function loadCalls() {
+    try {
+      const res = await fetch('/api/calls');
+      const data = await res.json();
+      allCalls = data;
+      render(allCalls);
+    } catch(e) {}
+  }
+
+  loadCalls();
+  setInterval(loadCalls, 10000);
+</script>
+</body>
+</html>
